@@ -1,0 +1,197 @@
+# Local dev / Step 1 infra glue. No GPU services here — segment_worker etc.
+# run mock/adapter implementations only until Step 2 swaps in the real ones.
+#
+# Usage:
+#   cp .env.example .env
+#   docker-compose up -d postgres redis            # just the datastores
+#   docker-compose up -d                            # everything, including api + workers
+#
+# api/ and workers/<name>/ Dockerfiles build with this file's directory as
+# their context (see api/Dockerfile) so COPY paths inside them stay relative
+# to the repo root.
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: movie_highlights
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      # Host port 5433, not the default 5432 — this dev machine already runs
+      # a native/system Postgres bound to 5432. Container-internal port stays
+      # 5432 (api/worker services talk to it via the "postgres" hostname on
+      # the compose network, unaffected by this host-side remap). See .env.example.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    ports:
+      # Host port 6380 — 6379 is already held by another project's Redis on
+      # this machine. Same in-network-vs-host-port distinction as postgres above.
+      - "6380:6379"
+
+  # Step 1 code defaults to the in-memory vector store (see
+  # storage/qdrant_client.get_vector_store) when environment=local, so nothing
+  # actually talks to this yet. It's here so a developer can opt into a real
+  # Qdrant instance by setting environment != local without touching compose.
+  qdrant:
+    image: qdrant/qdrant
+    ports:
+      - "6333:6333"
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      # Host port 8001 — 8000 is already held by another local dev server on
+      # this machine (this is a per-machine conflict, not a fixed convention;
+      # adjust freely). Container-internal port stays 8000.
+      - "8001:8000"
+    env_file:
+      - .env
+    environment:
+      # Override host-facing defaults from .env with in-network hostnames —
+      # .env's "localhost" URLs are for running processes on the host against
+      # docker-compose's published ports, not for container-to-container calls.
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+
+  segment_worker:
+    build:
+      context: .
+      dockerfile: workers/segment_worker/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q segment_worker
+
+  span_builder:
+    build:
+      context: .
+      dockerfile: workers/span_builder/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q span_builder
+
+  scorer:
+    build:
+      context: .
+      dockerfile: workers/scorer/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q scorer
+
+  # Opt-in (config.Settings.use_global_memory_pipeline=False by default —
+  # see .env). Only needed when running the global-memory architecture; the
+  # default per-span pipeline never dispatches to this queue.
+  global_selector:
+    build:
+      context: .
+      dockerfile: workers/global_selector/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q global_selector
+
+  reducer:
+    build:
+      context: .
+      dockerfile: workers/reducer/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q reducer
+
+  ranker:
+    build:
+      context: .
+      dockerfile: workers/ranker/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q ranker
+
+  # orchestrator.pipeline.run_job runs on its own queue (see
+  # orchestrator/celery_app.py's task_routes) mirroring the one-queue-per-stage
+  # pattern of the 5 pipeline-stage workers above — added here to actually
+  # consume it, since run_job cannot execute outside task_always_eager test
+  # mode without a worker listening on "orchestrator".
+  orchestrator:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    depends_on:
+      - postgres
+      - redis
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/movie_highlights
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+      QDRANT_URL: http://qdrant:6333
+    command: celery -A orchestrator.celery_app worker --loglevel=info -Q orchestrator
+
+volumes:
+  postgres_data:

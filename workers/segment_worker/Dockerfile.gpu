@@ -1,0 +1,60 @@
+# Stage 2 (segment_worker) Celery worker image — GPU variant.
+#
+# Runs the REAL adapters (TransNetV2, faster-whisper, pyannote.audio,
+# InternVideo2, OpenCV, openSMILE) instead of Step 1's mocks. Selection is
+# config-driven per adapter (config.Settings.use_real_* — see
+# workers/segment_worker/tasks.py's SegmentWorkerAdapters defaults), so this
+# image only actually exercises real models once those env vars are set
+# (e.g. via .env / RunPod endpoint config) — it is not a hardcoded switch.
+#
+# UNTESTED on this machine (no local GPU) — built from each Real* adapter's
+# own documented requirements (see CLAUDE.md's Step 2 section for exactly
+# what each one needs and what to double-check). Validate on real GPU
+# hardware before relying on it.
+#
+# Build context must be the repo root, e.g.:
+#   docker build -f workers/segment_worker/Dockerfile.gpu -t segment-worker-gpu .
+
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+WORKDIR /app
+
+# python3.11 + ffmpeg (every real adapter goes through
+# workers/segment_worker/adapters/_media.py's ffmpeg/ffprobe subprocess calls
+# to pull frames/audio out of source_video_url) + build-essential (flash-attn
+# and other GPU packages compile native extensions).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-venv python3-pip \
+        ffmpeg \
+        build-essential git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3
+
+COPY pyproject.toml ./
+COPY config ./config
+COPY models ./models
+COPY storage ./storage
+COPY orchestrator ./orchestrator
+COPY workers ./workers
+
+# torch first, from the CUDA 12.4-matching wheel index, so flash-attn's build
+# (which links against the already-installed torch) finds a compatible ABI
+# instead of pip resolving some other torch/CUDA combination on its own.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+
+# flash-attn's sdist build is slow and CUDA-toolkit-sensitive — --no-build-isolation
+# lets it see the torch just installed above rather than a fresh build env
+# with no torch, which is the single most common flash-attn install failure.
+RUN pip install --no-cache-dir '.[gpu]' --no-build-isolation
+
+ENV PYTHONUNBUFFERED=1
+# Confirmed necessary on real GPU hardware: huggingface_hub's "xet" fast-
+# download backend (via the hf-xet package, a transitive dep here) hung
+# indefinitely (0 bytes transferred, no error) downloading
+# mobiuslabsgmbh/faster-whisper-large-v3-turbo from this RunPod pod's network
+# path — silent, no timeout, no error. hf_transfer (used for InternVideo2's
+# download) was unaffected; this is xet-specific. Disabling xet falls back to
+# the normal HTTP downloader, which worked immediately.
+ENV HF_HUB_DISABLE_XET=1
+
+CMD ["celery", "-A", "orchestrator.celery_app", "worker", "-Q", "segment_worker", "--loglevel=info"]
