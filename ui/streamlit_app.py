@@ -5,9 +5,15 @@ this is a second, Python-native UI for the same API, not a replacement.
 
 The one JobCreateRequest field with no backend default — source_video_url —
 is kept in its own required section; every other field (total_duration_seconds,
-segment_count, sla_target_seconds) has a real backend-side default/auto-detect
-path (see models.schemas.JobCreateRequest, config.Settings), so those are
-grouped as "automatic" here, each with an explicit override toggle.
+segment_count/segment_duration_seconds, sla_target_seconds) has a real
+backend-side default/auto-detect path (see models.schemas.JobCreateRequest,
+config.Settings), so those are grouped as "automatic" here, each with an
+explicit override toggle. Segment sharding specifically offers a choice
+between an exact segment_count and a target segment_duration_seconds (the
+backend derives segment_count from that via
+orchestrator.splitter.compute_segment_count_from_duration) — duration is
+usually the more intuitive knob ("shard into ~2-minute chunks") than having
+to already know how many segments that implies.
 
 Run with the API already up (`docker-compose up -d --build`, or
 `uvicorn api.main:app --port 8001` locally), then:
@@ -134,14 +140,28 @@ if total_duration_seconds is None and st.session_state.detected_duration:
     # "manual override" the user asked for.
     total_duration_seconds = st.session_state.detected_duration
 
-segment_count = auto_or_manual(
-    "Segment count",
-    "dev placeholder (4) — not a confirmed production default, see CLAUDE.md",
-    key="segment_count",
-    min_value=1,
-    default_value=4,
-    step=1,
+st.markdown("**Segment sharding**")
+sharding_col, value_col = st.columns([1, 2])
+sharding_mode = sharding_col.radio(
+    "Sharding mode",
+    ["Auto", "By duration", "By count"],
+    key="sharding_mode",
+    label_visibility="collapsed",
 )
+segment_count = None
+segment_duration_seconds = None
+if sharding_mode == "By duration":
+    segment_duration_seconds = value_col.number_input(
+        "Target seconds per segment", min_value=1.0, value=120.0, step=1.0, key="segment_duration_seconds"
+    )
+    value_col.caption("segment_count is derived server-side: ceil(total_duration / this value)")
+elif sharding_mode == "By count":
+    segment_count = value_col.number_input("Segment count", min_value=1, value=4, step=1, key="segment_count")
+else:
+    value_col.markdown(
+        "**Segment count**  \n:gray[Auto — dev placeholder (4), not a confirmed production default, see CLAUDE.md]"
+    )
+
 sla_target_seconds = auto_or_manual(
     "SLA target (seconds)",
     "240s backend default",
@@ -158,7 +178,9 @@ if st.button("Submit job", type="primary", disabled=submit_disabled):
     payload = {"source_video_url": st.session_state.source_video_url}
     if total_duration_seconds is not None:
         payload["total_duration_seconds"] = total_duration_seconds
-    if segment_count is not None:
+    if segment_duration_seconds is not None:
+        payload["segment_duration_seconds"] = segment_duration_seconds
+    elif segment_count is not None:
         payload["segment_count"] = segment_count
     if sla_target_seconds is not None:
         payload["sla_target_seconds"] = sla_target_seconds

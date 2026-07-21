@@ -108,12 +108,21 @@ async def upload_video(file: UploadFile) -> UploadResponse:
 def submit_job(payload: JobCreateRequest, db: Session = Depends(get_db)) -> Job:
     settings = get_settings()
 
-    segment_count = payload.segment_count or settings.provisional_dev_segment_count
     sla_target_seconds = payload.sla_target_seconds or settings.default_sla_target_seconds
 
     total_duration_seconds = payload.total_duration_seconds
     if total_duration_seconds is None:
         total_duration_seconds = splitter.get_duration_probe().probe(payload.source_video_url)
+
+    # segment_duration_seconds (if given) derives segment_count from the now-
+    # resolved total_duration_seconds, taking priority over an explicit
+    # segment_count — see models.schemas.JobCreateRequest's docstring.
+    if payload.segment_duration_seconds is not None:
+        segment_count = splitter.compute_segment_count_from_duration(
+            total_duration_seconds, payload.segment_duration_seconds
+        )
+    else:
+        segment_count = payload.segment_count or settings.provisional_dev_segment_count
 
     segment_plan = splitter.compute_segment_plan(
         total_duration_seconds,

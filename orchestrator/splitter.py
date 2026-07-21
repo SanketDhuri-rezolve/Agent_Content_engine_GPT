@@ -8,7 +8,32 @@ across adjacent segments by comparing these timestamps directly, so any
 segment-local numbering here would silently corrupt that logic.
 """
 
+import math
 from abc import ABC, abstractmethod
+
+
+def compute_segment_count_from_duration(
+    total_duration_seconds: float,
+    segment_duration_seconds: float,
+) -> int:
+    """Auto-derives segment_count from a desired per-segment duration,
+    for callers who'd rather say "shard into ~2-minute chunks" than already
+    know how many segments that implies. Ceils rather than rounds so no
+    segment ends up LONGER than requested (relevant against
+    config.Settings.segment_worker_soft_time_limit_seconds), with a floor of
+    1 segment when the requested duration is >= the whole film.
+
+    Note the result feeds compute_segment_plan, which divides the film into
+    that many EQUAL-length segments — so actual per-segment length is
+    total_duration_seconds / segment_count, which is <= segment_duration_seconds
+    but generally a little shorter (e.g. a 700s film with a 120s target
+    yields 6 segments of ~116.7s each, not 5x120s + one 100s remainder).
+    """
+    if segment_duration_seconds <= 0:
+        raise ValueError(f"segment_duration_seconds must be > 0, got {segment_duration_seconds}")
+    if total_duration_seconds <= 0:
+        raise ValueError(f"total_duration_seconds must be > 0, got {total_duration_seconds}")
+    return max(1, math.ceil(total_duration_seconds / segment_duration_seconds))
 
 
 def compute_segment_plan(

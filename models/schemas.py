@@ -33,12 +33,25 @@ class JobCreateRequest(BaseModel):
     # Explicit only. No inline hardcoded 8/12 default anywhere in this codebase —
     # if omitted, the orchestrator falls back to
     # config.Settings.provisional_dev_segment_count, which is documented as an
-    # unconfirmed dev placeholder, not a production decision.
+    # unconfirmed dev placeholder, not a production decision. Ignored if
+    # segment_duration_seconds is also set (see below) — that takes priority.
     segment_count: int | None = Field(
         default=None,
         description="Number of parallel segments to shard the video into. "
         "Not yet decided for production (8 vs 12 pending Phase 3 latency "
         "measurements) — pass explicitly for tests/dev.",
+    )
+    # Alternative to segment_count: say how long each segment should be
+    # instead of how many there should be. api.main.submit_job derives
+    # segment_count from this via
+    # orchestrator.splitter.compute_segment_count_from_duration(), which
+    # needs total_duration_seconds resolved first (explicit or probed) — takes
+    # priority over segment_count when both are set.
+    segment_duration_seconds: float | None = Field(
+        default=None,
+        description="Desired duration per segment, in seconds. If set, "
+        "segment_count is auto-derived from this and the video's total "
+        "duration instead of being read directly.",
     )
 
 

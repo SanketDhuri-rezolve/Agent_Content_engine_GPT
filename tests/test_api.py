@@ -56,6 +56,36 @@ def test_create_job_returns_valid_job_response(client, db_session):
     assert isinstance(body["status"], str) and body["status"]
 
 
+def test_create_job_derives_segment_count_from_segment_duration(client, db_session):
+    payload = {
+        "source_video_url": "file:///tmp/fake_movie_duration.mp4",
+        "total_duration_seconds": 700.0,
+        "segment_duration_seconds": 120.0,
+    }
+
+    resp = client.post("/jobs", json=payload)
+
+    assert resp.status_code in (200, 201)
+    body = resp.json()
+    # ceil(700/120) == 6 — see TestComputeSegmentCountFromDuration in
+    # tests/test_splitter.py for the underlying unit-level assertions.
+    assert body["total_segments"] == 6
+
+
+def test_segment_duration_seconds_takes_priority_over_segment_count(client, db_session):
+    payload = {
+        "source_video_url": "file:///tmp/fake_movie_priority.mp4",
+        "total_duration_seconds": 700.0,
+        "segment_count": 4,
+        "segment_duration_seconds": 120.0,
+    }
+
+    resp = client.post("/jobs", json=payload)
+
+    assert resp.status_code in (200, 201)
+    assert resp.json()["total_segments"] == 6
+
+
 def test_get_job_unknown_id_returns_404(client, db_session):
     resp = client.get(f"/jobs/{uuid.uuid4()}")
     assert resp.status_code == 404

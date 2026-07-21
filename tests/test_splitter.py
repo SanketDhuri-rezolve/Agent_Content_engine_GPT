@@ -6,7 +6,12 @@ assertion here is expressed in those terms, never segment-local.
 
 import pytest
 
-from orchestrator.splitter import DurationProbe, MockDurationProbe, compute_segment_plan
+from orchestrator.splitter import (
+    DurationProbe,
+    MockDurationProbe,
+    compute_segment_count_from_duration,
+    compute_segment_plan,
+)
 
 
 class TestComputeSegmentPlanEvenSplit:
@@ -140,6 +145,45 @@ class TestComputeSegmentPlanValidation:
     def test_rejects_negative_overlap(self):
         with pytest.raises(ValueError):
             compute_segment_plan(total_duration_seconds=100.0, segment_count=4, overlap_seconds=-1.0)
+
+
+class TestComputeSegmentCountFromDuration:
+    def test_evenly_divisible_duration(self):
+        assert compute_segment_count_from_duration(total_duration_seconds=600.0, segment_duration_seconds=120.0) == 5
+
+    def test_ceils_rather_than_rounds_so_no_segment_exceeds_the_target(self):
+        # 700 / 120 = 5.83 -> 6 segments of ~116.7s each, not 5 (which would
+        # make each segment LONGER than the requested 120s).
+        assert compute_segment_count_from_duration(total_duration_seconds=700.0, segment_duration_seconds=120.0) == 6
+
+    def test_requested_duration_covers_whole_film_yields_one_segment(self):
+        assert compute_segment_count_from_duration(total_duration_seconds=90.0, segment_duration_seconds=120.0) == 1
+
+    def test_requested_duration_far_exceeds_film_still_floors_at_one(self):
+        assert compute_segment_count_from_duration(total_duration_seconds=10.0, segment_duration_seconds=3600.0) == 1
+
+    def test_result_feeds_compute_segment_plan_without_exceeding_target_length(self):
+        total_duration = 700.0
+        target = 120.0
+        segment_count = compute_segment_count_from_duration(total_duration, target)
+
+        plan = compute_segment_plan(total_duration, segment_count, overlap_seconds=0.0)
+
+        assert len(plan) == segment_count
+        for item in plan:
+            assert (item["end_ts"] - item["start_ts"]) <= target
+
+    def test_rejects_zero_or_negative_segment_duration(self):
+        with pytest.raises(ValueError):
+            compute_segment_count_from_duration(total_duration_seconds=100.0, segment_duration_seconds=0.0)
+        with pytest.raises(ValueError):
+            compute_segment_count_from_duration(total_duration_seconds=100.0, segment_duration_seconds=-5.0)
+
+    def test_rejects_zero_or_negative_total_duration(self):
+        with pytest.raises(ValueError):
+            compute_segment_count_from_duration(total_duration_seconds=0.0, segment_duration_seconds=60.0)
+        with pytest.raises(ValueError):
+            compute_segment_count_from_duration(total_duration_seconds=-10.0, segment_duration_seconds=60.0)
 
 
 class TestMockDurationProbe:
