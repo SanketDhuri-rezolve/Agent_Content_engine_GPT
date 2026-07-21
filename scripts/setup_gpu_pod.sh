@@ -132,44 +132,76 @@ else
     skip_step "8. pipeline deps" "$PIPELINE_DIR not found — set PIPELINE_DIR to the repo's actual path"
 fi
 
-# 9. .env — upsert rather than overwrite, so any other keys already in .env
-# (DATABASE_URL, REDIS_URL, etc. — see .env.example) survive a re-run.
-if [ -d "$PIPELINE_DIR" ]; then
-    ENV_FILE="$PIPELINE_DIR/.env"
-    (
-        touch "$ENV_FILE" &&
-        for kv in \
-            "GEMMA4_ENDPOINT_URL=http://localhost:${GEMMA4_PORT}/v1/chat/completions" \
-            "GEMMA4_TIMEOUT_SECONDS=60.0" \
-            "USE_REAL_TRANSCRIBER=true"
-        do
-            key="${kv%%=*}"
-            grep -q "^${key}=" "$ENV_FILE" 2>/dev/null \
-                && sed -i.bak "s|^${key}=.*|${kv}|" "$ENV_FILE" \
-                || echo "$kv" >>"$ENV_FILE"
-        done && rm -f "$ENV_FILE.bak"
-    ) && log_step_result "9. write .env" "OK ($ENV_FILE)" \
-      || log_step_result "9. write .env" "FAILED"
-else
-    skip_step "9. write .env" "$PIPELINE_DIR not found"
-fi
-
-# 10. Local infra — docker-compose.local.yml is what the reference names;
-# this repo only ships docker-compose.yml, so fall back to that. NOTE
-# (CLAUDE.md): a RunPod Pod cannot run nested docker-compose at all (the Pod
-# itself is already one container) — expect this to fail there and use the
-# bare-metal service start path from CLAUDE.md's "Deploying on RunPod"
-# section instead.
-if [ -d "$PIPELINE_DIR" ]; then
+# 9. Local infra — a RunPod Pod cannot run nested docker-compose at all (the
+# Pod itself is already one container), so this tries docker first and falls
+# back to installing Postgres/Redis directly on the pod otherwise, per
+# CLAUDE.md's "Deploying on RunPod" section (`service`, not `systemctl` — Pods
+# have no systemd). Bare-metal Postgres/Redis land on the same default ports
+# (5432/6379) config.Settings already assumes, so no .env override is needed
+# for that path; the docker path publishes on 5433/6380 instead (see
+# docker-compose.yml), so step 10 below only adds those overrides when this
+# step actually went through docker.
+INFRA_MODE="none"
+if docker info >/dev/null 2>&1 && [ -d "$PIPELINE_DIR" ]; then
     if [ -f "$PIPELINE_DIR/docker-compose.local.yml" ]; then
         COMPOSE_FILE="docker-compose.local.yml"
     else
         COMPOSE_FILE="docker-compose.yml"
     fi
-    run_step "10. docker-compose up -d ($COMPOSE_FILE)" \
+    run_step "9. docker-compose up -d ($COMPOSE_FILE)" \
         "cd '$PIPELINE_DIR' && docker-compose -f '$COMPOSE_FILE' up -d"
+    INFRA_MODE="docker"
+elif [ -d "$PIPELINE_DIR" ]; then
+    run_step "9a. install postgresql + redis-server (bare metal)" \
+        "(apt-get update -qq && apt-get install -y -qq postgresql redis-server) || (yum install -y postgresql-server redis)"
+    run_step "9b. start postgresql" "service postgresql start"
+    run_step "9c. start redis-server" "service redis-server start"
+    run_step "9d. set postgres role password" \
+        "cat > /tmp/pipeline_bootstrap.sql <<'SQL'
+ALTER USER postgres PASSWORD 'postgres';
+SQL
+su postgres -c \"psql -f /tmp/pipeline_bootstrap.sql\""
+    # createdb's own exit code is left real (not masked) — a FAILED here on a
+    # re-run almost always just means "database already exists", visible
+    # verbatim in the step's log; anything else (su/postgres genuinely
+    # broken) needs to be seen too, not silently swallowed.
+    run_step "9e. create movie_highlights database" "su postgres -c 'createdb movie_highlights'"
+    INFRA_MODE="bare_metal"
 else
-    skip_step "10. docker-compose up -d" "$PIPELINE_DIR not found"
+    skip_step "9. local infra" "$PIPELINE_DIR not found"
+fi
+
+# 10. .env — upsert rather than overwrite, so any other keys already in .env
+# survive a re-run. DATABASE_URL/REDIS_URL/CELERY_* overrides only get added
+# when step 9 actually went through docker (published on 5433/6380, not the
+# defaults config.Settings assumes) — bare-metal needs no override.
+if [ -d "$PIPELINE_DIR" ]; then
+    ENV_FILE="$PIPELINE_DIR/.env"
+    ENV_KEYS=(
+        "GEMMA4_ENDPOINT_URL=http://localhost:${GEMMA4_PORT}/v1/chat/completions"
+        "GEMMA4_TIMEOUT_SECONDS=60.0"
+        "USE_REAL_TRANSCRIBER=true"
+    )
+    if [ "$INFRA_MODE" = "docker" ]; then
+        ENV_KEYS+=(
+            "DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5433/movie_highlights"
+            "REDIS_URL=redis://localhost:6380/0"
+            "CELERY_BROKER_URL=redis://localhost:6380/0"
+            "CELERY_RESULT_BACKEND=redis://localhost:6380/1"
+        )
+    fi
+    (
+        touch "$ENV_FILE" &&
+        for kv in "${ENV_KEYS[@]}"; do
+            key="${kv%%=*}"
+            grep -q "^${key}=" "$ENV_FILE" 2>/dev/null \
+                && sed -i.bak "s|^${key}=.*|${kv}|" "$ENV_FILE" \
+                || echo "$kv" >>"$ENV_FILE"
+        done && rm -f "$ENV_FILE.bak"
+    ) && log_step_result "10. write .env" "OK ($ENV_FILE, infra_mode=$INFRA_MODE)" \
+      || log_step_result "10. write .env" "FAILED"
+else
+    skip_step "10. write .env" "$PIPELINE_DIR not found"
 fi
 
 # --- Summary -----------------------------------------------------------------
