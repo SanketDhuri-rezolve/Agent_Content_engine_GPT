@@ -1,0 +1,30 @@
+# =============================================================================
+# requirements.txt — Movie Highlight Pipeline
+# Generated from pyproject.toml (requires-python >= 3.11)
+#
+# Install core deps only (no GPU, zero-cost scaffold validation):
+#   pip install -r requirements.txt
+#
+# Install with GPU/ML extras (Step 2+, requires CUDA hardware):
+#   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# Install with dev/test extras:
+#   pip install -r requirements.txt -r requirements-dev.txt
+# =============================================================================
+
+# --- Core / Runtime -----------------------------------------------------------
+fastapi>=0.128.0
+uvicorn[standard]>=0.30.0
+celery[redis]>=5.3.4
+redis>=5.0.0
+sqlalchemy>=2.0.30
+alembic>=1.13.0
+psycopg2-binary>=2.9.9
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+structlog>=24.1.0
+qdrant-client>=1.9.0
+boto3>=1.34.0
+httpx>=0.27.0
+numpy>=1.26.0
+python-multipart>=0.0.9

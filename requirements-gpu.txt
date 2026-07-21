@@ -1,0 +1,49 @@
+# =============================================================================
+# requirements-gpu.txt — GPU / ML extras for Movie Highlight Pipeline
+# Step 2+ only. Requires CUDA hardware.
+#
+# Usage:
+#   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# NOTE: flash-attn may require --no-build-isolation on some systems:
+#   pip install flash-attn>=2.5 --no-build-isolation
+# =============================================================================
+
+# Shot detection (TransNetV2)
+transnetv2-pytorch>=1.0.5
+
+# Speech transcription (faster-whisper / large-v3-turbo)
+faster-whisper>=1.1.0,<2
+
+# Speaker diarization (pyannote.audio >= 4.0; 4.0.6 was yanked)
+pyannote.audio>=4.0.0,!=4.0.6
+
+# Audio I/O for diarizer (plain libsndfile, no CUDA dependency)
+soundfile>=0.12.1
+
+# Visual embeddings (InternVideo2 via HuggingFace transformers)
+# <5: transformers 5.x breaks InternVideo2's remote modeling code
+transformers>=4.40,<5
+torch>=2.1
+pillow>=10.0
+einops>=0.7
+timm>=1.0
+
+# Attention kernel required by InternVideo2 remote code
+# Install with --no-build-isolation if plain pip install fails
+flash-attn>=2.5
+
+# HuggingFace Hub (direct dep: hf_hub_download used in visual_embedder.py)
+huggingface_hub>=0.34.0
+
+# Faster HF downloads (HF_HUB_ENABLE_HF_TRANSFER=1)
+hf_transfer>=0.1.4
+
+# Motion features (OpenCV, headless — no display server in Celery containers)
+opencv-python-headless>=4.9,<6
+
+# Audio features (openSMILE)
+opensmile>=2.6.0
+
+# Face detection (MTCNN via facenet-pytorch)
+facenet-pytorch>=2.6.0
