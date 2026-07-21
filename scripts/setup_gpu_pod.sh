@@ -26,7 +26,7 @@
 set -uo pipefail  # deliberately NOT -e — every step must survive a failure
 
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
-PIPELINE_DIR="${PIPELINE_DIR:-$WORKSPACE_DIR/movie-highlight-pipeline}"
+PIPELINE_DIR="${PIPELINE_DIR:-$WORKSPACE_DIR/Agent_Content_engine_GPT}"
 VLLM_VENV_DIR="${VLLM_VENV_DIR:-$WORKSPACE_DIR/vllm-venv}"
 GEMMA4_MODEL="${GEMMA4_MODEL:-google/gemma-4-12B-it-qat-w4a16-ct}"
 GEMMA4_PORT="${GEMMA4_PORT:-8002}"
