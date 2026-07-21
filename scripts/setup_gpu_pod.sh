@@ -119,6 +119,12 @@ fi
 # 8. Pipeline deps (inside the already-handed-off folder)
 if [ -d "$PIPELINE_DIR" ]; then
     run_step "8a. create pipeline venv" "python3 -m venv '$PIPELINE_DIR/.venv'"
+    # Python's venv module (3.12+) only bundles pip, not setuptools/wheel.
+    # --no-build-isolation below makes pip use whatever's already in this venv
+    # as the build backend instead of fetching its own, so setuptools has to
+    # be installed here explicitly or the build backend itself can't be found.
+    run_step "8a2. pip install -U pip setuptools wheel (pipeline venv)" \
+        "'$PIPELINE_DIR/.venv/bin/pip' install -q -U pip setuptools wheel"
     if [ -n "$PIP_INSTALL_EXTRAS" ]; then
         # --no-build-isolation: flash-attn's build needs the already-installed
         # torch visible, which pip's isolated build env otherwise hides
@@ -202,6 +208,28 @@ if [ -d "$PIPELINE_DIR" ]; then
       || log_step_result "10. write .env" "FAILED"
 else
     skip_step "10. write .env" "$PIPELINE_DIR not found"
+fi
+
+# 11. Verify infra is actually reachable — starting a service isn't the same
+# as it accepting connections (wrong port, crashed on boot, etc. all still
+# "start" successfully as far as `service X start`'s own exit code is
+# concerned). Uses whichever ports step 9 actually landed on.
+if [ "$INFRA_MODE" = "docker" ]; then
+    PG_CHECK_PORT=5433
+    REDIS_CHECK_PORT=6380
+elif [ "$INFRA_MODE" = "bare_metal" ]; then
+    PG_CHECK_PORT=5432
+    REDIS_CHECK_PORT=6379
+else
+    PG_CHECK_PORT=""
+fi
+if [ -n "$PG_CHECK_PORT" ]; then
+    run_step "11a. verify Postgres reachable (localhost:$PG_CHECK_PORT)" \
+        "pg_isready -h localhost -p $PG_CHECK_PORT"
+    run_step "11b. verify Redis reachable (localhost:$REDIS_CHECK_PORT)" \
+        "redis-cli -h localhost -p $REDIS_CHECK_PORT ping | grep -qi PONG"
+else
+    skip_step "11. verify infra reachable" "step 9 never ran (no INFRA_MODE)"
 fi
 
 # --- Summary -----------------------------------------------------------------
