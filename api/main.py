@@ -117,18 +117,28 @@ def submit_job(payload: JobCreateRequest, db: Session = Depends(get_db)) -> Job:
     # segment_duration_seconds (if given) derives segment_count from the now-
     # resolved total_duration_seconds, taking priority over an explicit
     # segment_count — see models.schemas.JobCreateRequest's docstring.
-    if payload.segment_duration_seconds is not None:
-        segment_count = splitter.compute_segment_count_from_duration(
-            total_duration_seconds, payload.segment_duration_seconds
-        )
-    else:
-        segment_count = payload.segment_count or settings.provisional_dev_segment_count
+    #
+    # Both splitter calls below validate their own inputs and raise ValueError
+    # on bad values (e.g. a resolved total_duration_seconds <= 0) — caught
+    # here and turned into a clean 422 rather than leaking as an unhandled
+    # 500, since Pydantic's own field constraints can't cover every case
+    # (total_duration_seconds may arrive via an external probe, not just the
+    # request body).
+    try:
+        if payload.segment_duration_seconds is not None:
+            segment_count = splitter.compute_segment_count_from_duration(
+                total_duration_seconds, payload.segment_duration_seconds
+            )
+        else:
+            segment_count = payload.segment_count or settings.provisional_dev_segment_count
 
-    segment_plan = splitter.compute_segment_plan(
-        total_duration_seconds,
-        segment_count,
-        settings.segment_overlap_seconds,
-    )
+        segment_plan = splitter.compute_segment_plan(
+            total_duration_seconds,
+            segment_count,
+            settings.segment_overlap_seconds,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     job = state.create_job(
         db,

@@ -49,6 +49,7 @@ class JobCreateRequest(BaseModel):
     # priority over segment_count when both are set.
     segment_duration_seconds: float | None = Field(
         default=None,
+        gt=0,
         description="Desired duration per segment, in seconds. If set, "
         "segment_count is auto-derived from this and the video's total "
         "duration instead of being read directly.",

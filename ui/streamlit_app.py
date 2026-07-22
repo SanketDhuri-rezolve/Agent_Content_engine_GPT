@@ -160,7 +160,7 @@ with submit_tab:
         key="source_video_url",
         placeholder="https://example.com/movie.mp4",
     )
-    if st.session_state.detected_duration:
+    if st.session_state.detected_duration is not None:
         st.caption(f"Duration auto-detected: {fmt_time(st.session_state.detected_duration)}")
 
     # -------------------------------------------------------------------------
@@ -172,15 +172,19 @@ with submit_tab:
         "Duration (seconds)",
         (
             f"{fmt_time(st.session_state.detected_duration)} detected from upload"
-            if st.session_state.detected_duration
+            if st.session_state.detected_duration is not None
             else "probed via ffprobe from the source"
         ),
         key="total_duration_seconds",
         min_value=1.0,
-        default_value=float(st.session_state.detected_duration or 3600.0),
+        default_value=(
+            float(st.session_state.detected_duration)
+            if st.session_state.detected_duration is not None
+            else 3600.0
+        ),
         step=1.0,
     )
-    if total_duration_seconds is None and st.session_state.detected_duration:
+    if total_duration_seconds is None and st.session_state.detected_duration is not None:
         # Already known from the upload — pass it along explicitly so the
         # backend skips a redundant ffprobe call, without showing it as a
         # "manual override" the user asked for.

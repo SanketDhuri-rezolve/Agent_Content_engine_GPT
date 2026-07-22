@@ -86,6 +86,36 @@ def test_segment_duration_seconds_takes_priority_over_segment_count(client, db_s
     assert resp.json()["total_segments"] == 6
 
 
+def test_zero_segment_duration_seconds_rejected_by_schema(client, db_session):
+    # gt=0 on the Pydantic field rejects this before it ever reaches
+    # orchestrator.splitter.compute_segment_count_from_duration.
+    payload = {
+        "source_video_url": "file:///tmp/fake_movie_bad_duration.mp4",
+        "total_duration_seconds": 700.0,
+        "segment_duration_seconds": 0.0,
+    }
+
+    resp = client.post("/jobs", json=payload)
+
+    assert resp.status_code == 422
+
+
+def test_negative_total_duration_seconds_returns_clean_422_not_500(client, db_session):
+    # total_duration_seconds has no Pydantic-level positivity constraint (it
+    # can legitimately arrive via an external probe, not just the request
+    # body) — this exercises api.main.submit_job's own try/except around the
+    # splitter calls, not schema validation.
+    payload = {
+        "source_video_url": "file:///tmp/fake_movie_negative_duration.mp4",
+        "total_duration_seconds": -10.0,
+        "segment_duration_seconds": 60.0,
+    }
+
+    resp = client.post("/jobs", json=payload)
+
+    assert resp.status_code == 422
+
+
 def test_get_job_unknown_id_returns_404(client, db_session):
     resp = client.get(f"/jobs/{uuid.uuid4()}")
     assert resp.status_code == 404
